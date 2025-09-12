@@ -1,0 +1,16 @@
+{
+  "name": "aimeos/laravel-analytics-cloudflare",
+  "description": "Cloudflare driver for Laravel Analytics Bridge",
+  "type": "library",
+  "license": "LGPL-2.1+",
+  "autoload": {
+    "psr-4": {
+      "Aimeos\\AnalyticsBridge\\Drivers\\": "src/"
+    }
+  },
+  "require": {
+    "php": "^8.2",
+    "google/apiclient": "^2.0",
+    "aimeos/laravel-analytics-bridge": "~1.0||dev-master"
+  }
+}
