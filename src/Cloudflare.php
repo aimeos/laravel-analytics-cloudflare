@@ -35,15 +35,17 @@ class Cloudflare implements Driver
         $startDate = now()->subDays($days)->toDateString();
         $endDate   = now()->toDateString();
 
+        $page = $this->pageFilter($url);
+
         $fragments = [];
         if (in_array('views', $this->types)) {
-            $fragments[] = $this->queryTraffic($url, $startDate, $endDate);
+            $fragments[] = $this->queryTraffic($page, $startDate, $endDate);
         }
         if (in_array('countries', $this->types)) {
-            $fragments[] = $this->queryCountries($url, $startDate, $endDate);
+            $fragments[] = $this->queryCountries($page, $startDate, $endDate);
         }
         if (in_array('referrers', $this->types)) {
-            $fragments[] = $this->queryReferrers($url, $startDate, $endDate);
+            $fragments[] = $this->queryReferrers($page, $startDate, $endDate);
         }
 
         if (empty($fragments)) {
@@ -63,7 +65,7 @@ class Cloudflare implements Driver
                 'query' => $query,
             ]);
 
-        if (!$response->ok()) {
+        if (!$response->ok() || $response->json('errors')) {
             throw new \RuntimeException($response->body());
         }
 
@@ -98,29 +100,27 @@ class Cloudflare implements Driver
     }
 
 
-    protected function queryTraffic(string $url, string $start, string $end): string
+    protected function queryTraffic(string $page, string $start, string $end): string
     {
         return <<<GQL
       traffic: httpRequestsAdaptiveGroups(
         filter: {
           datetime_geq: "{$start}T00:00:00Z",
           datetime_leq: "{$end}T23:59:59Z",
-          clientRequestPath: "{$url}"
+          {$page}
         },
         orderBy: [datetime_ASC]
       ) {
         dimensions {
           date: datetime
         }
-        sum {
-          requests
-        }
+        count
       }
 GQL;
     }
 
 
-    protected function queryCountries(string $url, string $start, string $end): string
+    protected function queryCountries(string $page, string $start, string $end): string
     {
         return <<<GQL
       countries: httpRequestsAdaptiveGroups(
@@ -128,40 +128,45 @@ GQL;
         filter: {
           datetime_geq: "{$start}T00:00:00Z",
           datetime_leq: "{$end}T23:59:59Z",
-          clientRequestPath: "{$url}"
+          {$page}
         },
-        orderBy: [sum_requests_DESC]
+        orderBy: [count_DESC]
       ) {
         dimensions {
           country: clientCountryName
         }
-        sum {
-          requests
-        }
+        count
       }
 GQL;
     }
 
 
-    protected function queryReferrers(string $url, string $start, string $end): string
+    protected function queryReferrers(string $page, string $start, string $end): string
     {
         return <<<GQL
       referrers: httpRequestsAdaptiveGroups(
         filter: {
           datetime_geq: "{$start}T00:00:00Z",
           datetime_leq: "{$end}T23:59:59Z",
-          clientRequestPath: "{$url}"
+          {$page}
         },
-        orderBy: [sum_requests_DESC]
+        orderBy: [count_DESC]
       ) {
         dimensions {
           referer: clientRefererHost
         }
-        sum {
-          requests
-        }
+        count
       }
 GQL;
+    }
+
+
+    protected function pageFilter(string $url): string
+    {
+        $host = json_encode(parse_url($url, PHP_URL_HOST) ?? '');
+        $path = json_encode(parse_url($url, PHP_URL_PATH) ?? '/');
+
+        return "clientRequestHTTPHost: {$host}, clientRequestPath: {$path}";
     }
 
 
@@ -170,7 +175,7 @@ GQL;
         return collect($groups)
             ->map(fn($row) => [
                 'key' => substr($row['dimensions']['date'], 0, 10),
-                'value' => $row['sum']['requests'] ?? 0,
+                'value' => $row['count'] ?? 0,
             ])
             ->groupBy('key')
             ->map(fn($items, $date) => [
@@ -187,7 +192,7 @@ GQL;
         return collect($groups)
             ->map(fn($row) => [
                 'key'   => $row['dimensions']['country'] ?? 'Unknown',
-                'value' => $row['sum']['requests'] ?? 0,
+                'value' => $row['count'] ?? 0,
             ])
             ->values()
             ->all();
@@ -200,7 +205,7 @@ GQL;
             ->map(function ($row) {
                 $host = strtolower($row['dimensions']['referer'] ?? '');
                 $type = $this->classifyReferrer($host);
-                $requests = $row['sum']['requests'] ?? 0;
+                $requests = $row['count'] ?? 0;
 
                 return [
                     'type' => $type,
